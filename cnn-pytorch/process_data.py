@@ -1,0 +1,188 @@
+import numpy as np
+import cPickle
+from collections import defaultdict
+import sys, re
+import pandas as pd
+
+def build_data_cv(data_folder, cv=10, clean_string=True):
+    """
+    Loads data and split into 10 folds.
+    """
+    revs = []
+    pos_file = data_folder[0]
+    neg_file = data_folder[1]
+    vocab = defaultdict(float)
+    with open(pos_file, "rb") as f:
+        for line in f:       
+            rev = []
+            rev.append(line.strip())
+            if clean_string:
+                orig_rev = clean_str(" ".join(rev))
+            else:
+                orig_rev = " ".join(rev).lower()
+            words = set(orig_rev.split())
+            for word in words:
+                vocab[word] += 1
+            datum  = {"y":1, 
+                      "text": orig_rev,                             
+                      "num_words": len(orig_rev.split()),
+                      "split": np.random.randint(0,cv)}
+            revs.append(datum)
+    with open(neg_file, "rb") as f:
+        for line in f:       
+            rev = []
+            rev.append(line.strip())
+            if clean_string:
+                orig_rev = clean_str(" ".join(rev))
+            else:
+                orig_rev = " ".join(rev).lower()
+            words = set(orig_rev.split())
+            for word in words:
+                vocab[word] += 1
+            datum  = {"y":0, 
+                      "text": orig_rev,                             
+                      "num_words": len(orig_rev.split()),
+                      "split": np.random.randint(0,cv)}
+            revs.append(datum)
+    return revs, vocab
+    
+def get_W(word_vecs, k=300):
+    """
+    Get word matrix. W[i] is the vector for word indexed by i
+    """
+    vocab_size = len(word_vecs)
+    word_idx_map = dict()
+    W = np.zeros(shape=(vocab_size+1, k), dtype='float32')            
+    W[0] = np.zeros(k, dtype='float32')
+    i = 1
+    for word in word_vecs:
+        W[i] = word_vecs[word]
+        word_idx_map[word] = i
+        i += 1
+    return W, word_idx_map
+
+def load_bin_vec(fname, vocab):
+    """
+    Loads 300x1 word vecs from Google (Mikolov) word2vec
+    """
+    word_vecs = {}
+    with open(fname, "rb") as f:
+        header = f.readline()	
+        vocab_size, layer1_size = map(int, header.split())
+        binary_len = np.dtype('float32').itemsize * layer1_size
+        for line in xrange(vocab_size):
+            word = []
+            while True:
+                ch = f.read(1)
+                if ch == ' ':
+                    word = ''.join(word)
+                    break
+                if ch != '\n':
+                    word.append(ch)   
+            if word in vocab:
+               word_vecs[word] = np.fromstring(f.read(binary_len), dtype='float32')  
+            else:
+                f.read(binary_len)
+    return word_vecs
+
+def add_unknown_words(word_vecs, vocab, min_df=1, k=300):
+    """
+    For words that occur in at least min_df documents, create a separate word vector.    
+    0.25 is chosen so the unknown vectors have (approximately) same variance as pre-trained ones
+    """
+    for word in vocab:
+        if word not in word_vecs and vocab[word] >= min_df:
+            word_vecs[word] = np.random.uniform(-0.25,0.25,k)  
+
+def clean_str(string, TREC=False):
+    """
+    Tokenization/string cleaning for all datasets except for SST.
+    Every dataset is lower cased except for TREC
+    """
+    string = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", string)     
+    string = re.sub(r"\'s", " \'s", string) 
+    string = re.sub(r"\'ve", " \'ve", string) 
+    string = re.sub(r"n\'t", " n\'t", string) 
+    string = re.sub(r"\'re", " \'re", string) 
+    string = re.sub(r"\'d", " \'d", string) 
+    string = re.sub(r"\'ll", " \'ll", string) 
+    string = re.sub(r",", " , ", string) 
+    string = re.sub(r"!", " ! ", string) 
+    string = re.sub(r"\(", " \( ", string) 
+    string = re.sub(r"\)", " \) ", string) 
+    string = re.sub(r"\?", " \? ", string) 
+    string = re.sub(r"\s{2,}", " ", string)    
+    return string.strip() if TREC else string.strip().lower()
+
+def clean_str_sst(string):
+    """
+    Tokenization/string cleaning for the SST dataset
+    """
+    string = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", string)   
+    string = re.sub(r"\s{2,}", " ", string)    
+    return string.strip().lower()
+
+def get_idx_from_sent(sent, word_idx_map, max_l=51, k=300, filter_h=5):
+    """
+    Transforms sentence into a list of indices. Pad with zeroes.
+    """
+    x = []
+    pad = filter_h - 1
+    for i in xrange(pad):
+        x.append(0)
+    words = sent.split()
+    for word in words:
+        if word in word_idx_map:
+            x.append(word_idx_map[word])
+    while len(x) < max_l+2*pad:
+        x.append(0)
+    return x
+
+def make_idx_data_cv(revs, word_idx_map, cv, max_l=51, k=300, filter_h=5):
+    """
+    Transforms sentences into a 2-d matrix.
+    """
+    train, test = [], []
+    for rev in revs:
+        sent = get_idx_from_sent(rev["text"], word_idx_map, max_l, k, filter_h)   
+        sent.append(rev["y"])
+        if rev["split"]==cv:            
+            test.append(sent)        
+        else:  
+            train.append(sent)   
+    train = np.array(train,dtype="int")
+    test = np.array(test,dtype="int")
+    return [train, test]  
+
+if __name__=="__main__":    
+    w2v_file = "../word2vec.bin"   
+#    data_folder = ["rt-polarity_test.pos","rt-polarity_test.neg"]    
+    data_folder = ["rt-polarity.pos","rt-polarity.neg"]    
+    cv_times = 10
+    print "loading data...", 
+    revs, vocab = build_data_cv(data_folder, cv=cv_times, clean_string=True)
+    max_l = np.max(pd.DataFrame(revs)["num_words"])
+    print "data loaded!"
+    print "number of sentences: " + str(len(revs))
+    print "vocab size: " + str(len(vocab))
+    print "max sentence length: " + str(max_l)
+    print "loading word2vec vectors...",
+    w2v = load_bin_vec(w2v_file, vocab)
+    print "word2vec loaded!"
+    print "num words already in word2vec: " + str(len(w2v))
+    add_unknown_words(w2v, vocab)
+    W, word_idx_map = get_W(w2v)
+    rand_vecs = {}
+    add_unknown_words(rand_vecs, vocab)
+    #W2, _ = get_W(rand_vecs)
+    #cPickle.dump([revs, W, W2, word_idx_map, vocab], open("data.p", "wb"))
+    
+    train_list = []
+    test_list = []
+    for i in xrange(cv_times):
+        datasets = make_idx_data_cv(revs, word_idx_map, i, max_l=56,k=300, filter_h=5)
+        train_list.append(np.random.permutation(datasets[0]))
+        test_list.append(np.random.permutation(datasets[1]))
+    cPickle.dump([W, word_idx_map, vocab, train_list, test_list], open("data.p", "wb"))
+    print "dataset created!"
+    
