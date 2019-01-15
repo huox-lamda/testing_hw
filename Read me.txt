@@ -1,0 +1,22 @@
+NP-CNN
+
+Requirements:
+Code is written in Python (2.7) and requires Theano.
+
+Data Preprocessing:
+The raw data can be preprocessed by one-hot or pre-trained word2vec representation.
+The example takes pre-trained word2vec representation. 
+Using the pre-trained `word2vec` vectors will also require downloading the binary file from
+https://code.google.com/p/word2vec/
+
+Running the example:
+THEANO_FLAGS=mode=FAST_RUN,device=cpu,floatX=float32 python npcnn.py % cpu for example 
+
+Example output:
+Each fold of cross-validation (cv) will output several new folders:
+middle: middle results, can be ignored or deleted
+results:
+-- labels: the labels of each instance, 1 indicates related, 0 indicates unrelated.
+-- predictions: the predicted labels of each test instance. 
+-- results: the confidence of each test instance. High value indicates high possibility to be related. 
+
